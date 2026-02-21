@@ -1,0 +1,22 @@
+{
+  "name": "agent-skill-clalit-pharm-search",
+  "version": "1.0.0",
+  "description": "Search medications and check real-time stock at Clalit pharmacies in Israel",
+  "main": "scripts/pharmacy-search.js",
+  "type": "module",
+  "scripts": {
+    "search": "node scripts/pharmacy-search.js search",
+    "pharmacies": "node scripts/pharmacy-search.js pharmacies",
+    "cities": "node scripts/pharmacy-search.js cities",
+    "stock": "node scripts/pharmacy-search.js stock",
+    "test": "node scripts/pharmacy-search.js test"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0"
+  },
+  "keywords": ["pharmacy", "medication", "clalit", "stock", "agent-skill", "בית מרקחת", "כללית"],
+  "license": "MIT"
+}
