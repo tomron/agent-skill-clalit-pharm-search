@@ -2,10 +2,19 @@
 name: clalit-pharm-search
 description: Search for medications and check real-time stock availability at Clalit pharmacies in Israel. Use when searching for drugs like "amoxicillin", "acamol/אקמול", "nurofen", or finding nearby Clalit pharmacy branches with stock. Supports Hebrew and English drug names. כללית, בית מרקחת, תרופות, מלאי, בדיקת מלאי, בית מרקחת כללית.
 license: MIT
+homepage: https://github.com/tomron/agent-skill-clalit-pharm-search
 compatibility: Requires Node.js 18+ and internet access. The `stock` command requires Puppeteer (headless Chrome, ~300 MB download on first use).
 metadata:
-  author: tomron
+  author: tomron (https://github.com/tomron)
   version: "1.0.0"
+  openclaw:
+    emoji: 💊
+    os:
+      - darwin
+      - linux
+    requires:
+      bins:
+        - node
 ---
 
 # Clalit Pharmacy Stock Check
