@@ -7,13 +7,13 @@ Inspired by [agent-skill-maccabi-pharm-search](https://github.com/alexpolonsky/a
 ## Installation
 
 ```bash
-npx skills add <your-github-username>/agent-skill-clalit-pharm-search
+npx skills add tomron/agent-skill-clalit-pharm-search
 ```
 
 Or clone manually into `~/.claude/skills/`:
 
 ```bash
-git clone https://github.com/<your-github-username>/agent-skill-clalit-pharm-search \
+git clone https://github.com/tomron/agent-skill-clalit-pharm-search \
   ~/.claude/skills/clalit-pharm-search
 cd ~/.claude/skills/clalit-pharm-search
 npm install
