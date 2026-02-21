@@ -62,8 +62,6 @@ node {baseDir}/scripts/pharmacy-search.js stock 1000157274 --city 5000
 # Jerusalem (city code 3000)
 node {baseDir}/scripts/pharmacy-search.js stock 1000157274 --city 3000
 
-# Multiple medications at once
-node {baseDir}/scripts/pharmacy-search.js stock 1000157274 1000234567 --city 5000
 ```
 
 Run `cities` to search for city codes.

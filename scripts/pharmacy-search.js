@@ -72,18 +72,32 @@ async function loadPageWithBundleBypass(page) {
 
 async function captureStockResponse(page, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timeout waiting for stock API response')), timeoutMs);
-    page.on('response', async res => {
-      if (!res.url().includes('GetPharmacyStock')) return;
+    let settled = false;
+    const settle = (fn, val) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      page.off('response', handler);
+      fn(val);
+    };
+    const timer = setTimeout(
+      () => settle(reject, new Error('Timeout waiting for stock API response')),
+      timeoutMs
+    );
+    const handler = async res => {
+      if (!res.url().includes('GetPharmacyStock')) return;
       const ct = res.headers()['content-type'] || '';
       if (!ct.includes('application/json')) {
-        reject(new Error(`WAF_BLOCKED:${res.status()}`));
+        settle(reject, new Error(`WAF_BLOCKED:${res.status()}`));
         return;
       }
-      const data = await res.json().catch(reject);
-      if (data) resolve(data);
-    });
+      try {
+        settle(resolve, await res.json());
+      } catch (err) {
+        settle(reject, err);
+      }
+    };
+    page.on('response', handler);
   });
 }
 
@@ -270,10 +284,12 @@ function parseStockArgs(args) {
 }
 
 async function resolveOmryNames(catCodes) {
-  // Resolve catCode → omryName. The API is text-based, so we scan a-z prefixes.
+  // Resolve catCode → omryName. The API is text-only, so we scan letter prefixes.
+  // Scan both a-z (Latin brand names) and Hebrew letters (some medications use Hebrew names).
   const nameMap = new Map(catCodes.map(c => [c, String(c)]));
   const remaining = new Set(catCodes);
-  for (const prefix of 'abcdefghijklmnopqrstuvwxyz') {
+  const prefixes = 'abcdefghijklmnopqrstuvwxyz\u05d0\u05d1\u05d2\u05d3\u05d4\u05d5\u05d6\u05d7\u05d8\u05d9\u05db\u05dc\u05de\u05e0\u05e1\u05e2\u05e4\u05e6\u05e7\u05e8\u05e9\u05ea';
+  for (const prefix of prefixes) {
     if (remaining.size === 0) break;
     const results = await searchPost('GetFilterefMedicationsList', {
       searchText: encodeSearchText(prefix),
@@ -314,7 +330,7 @@ async function cmdStock(args) {
     console.error('       stock <catCode> [catCode2 ...] --pharmacy <deptCode>');
     process.exit(1);
   }
-  if (!cityCode && !pharmacyCode) {
+  if (cityCode === null && pharmacyCode === null) {
     console.error('Error: provide --city <cityCode> or --pharmacy <deptCode>');
     process.exit(1);
   }
