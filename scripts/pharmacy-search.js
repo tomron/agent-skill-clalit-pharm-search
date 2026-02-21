@@ -253,8 +253,10 @@ async function cmdCities(args) {
     console.log(`No cities matched "${filterQuery}"`);
     return;
   }
-  const label = filterQuery ? `${filtered.length} cities matching "${filterQuery}"` : `${filtered.length} cities`;
-  console.log(`${label}:\n`);
+  const label = filterQuery
+    ? `Found ${filtered.length} cities matching "${filterQuery}":`
+    : `Found ${filtered.length} cities:`;
+  console.log(`${label}\n`);
   for (const city of filtered) {
     console.log(`  ${city.cityCode} | ${city.cityName}`);
   }
@@ -311,12 +313,13 @@ function printStockResults(data) {
     return;
   }
   for (const ph of data.pharmaciesList) {
-    console.log(`\n📍 ${ph.pharmacyName}`);
-    console.log(`   ${ph.pharmacyAdress || ''}`);
-    if (ph.pharmacyPhone) console.log(`   📞 ${ph.pharmacyPhone}`);
-    console.log(`   🕐 ${ph.ifOpenedNow ? 'פתוח' : 'סגור'}`);
+    const headerParts = [ph.pharmacyName];
+    if (ph.pharmacyAdress) headerParts.push(ph.pharmacyAdress);
+    if (ph.pharmacyPhone) headerParts.push(ph.pharmacyPhone);
+    headerParts.push(ph.ifOpenedNow ? 'פתוח' : 'סגור');
+    console.log(`\n  ${headerParts.join(' | ')}`);
     for (const med of ph.medicationsList ?? []) {
-      console.log(`   💊 ${med.medicationName}: ${stockLabel(med.kodStatusMlay)}`);
+      console.log(`    ${med.medicationName}: ${stockLabel(med.kodStatusMlay)}`);
     }
   }
   console.log(`\nTotal: ${data.pharmaciesList.length} pharmacy branch(es)`);
@@ -384,10 +387,10 @@ async function cmdTest() {
   async function check(label, fn) {
     try {
       await fn();
-      console.log(`  ✓ ${label}`);
+      console.log(`  PASS ${label}`);
       passed++;
     } catch (err) {
-      console.log(`  ✗ ${label}: ${err.message}`);
+      console.log(`  FAIL ${label}: ${err.message}`);
       failed++;
     }
   }
