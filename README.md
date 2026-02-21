@@ -61,7 +61,7 @@ node scripts/pharmacy-search.js cities haifa
 
 **Sample output:**
 ```
-3 cities matching "תל אביב":
+Found 3 cities matching "תל אביב":
 
   5000 | תל-אביב-יפו
   5001 | תל מונד
@@ -76,7 +76,6 @@ Use the `cityCode` (first column) with the `stock --city` command.
 
 ```bash
 node scripts/pharmacy-search.js pharmacies רמת
-node scripts/pharmacy-search.js pharmacies אסותא
 ```
 
 **Sample output:**
@@ -112,17 +111,11 @@ node scripts/pharmacy-search.js stock 1000157274 1000234567 --city 5000
 
 **Sample output:**
 ```
-📍 תל אביב מרכז - בית מרקחת - כללית
-   רחוב דיזנגוף 50, תל אביב
-   📞 03-1234567
-   🕐 פתוח
-   💊 AMOXAPEN 29M SUS 250MG/5ML 100: במלאי
+  תל אביב מרכז - בית מרקחת - כללית | רחוב דיזנגוף 50, תל אביב | 03-1234567 | פתוח
+    AMOXAPEN 29M SUS 250MG/5ML 100: במלאי
 
-📍 תל אביב צפון - בית מרקחת - כללית
-   רחוב ארלוזורוב 100, תל אביב
-   📞 03-7654321
-   🕐 סגור
-   💊 AMOXAPEN 29M SUS 250MG/5ML 100: אין במלאי
+  תל אביב צפון - בית מרקחת - כללית | רחוב ארלוזורוב 100, תל אביב | 03-7654321 | סגור
+    AMOXAPEN 29M SUS 250MG/5ML 100: אין במלאי
 
 Total: 2 pharmacy branch(es)
 ```
@@ -148,9 +141,9 @@ Runs smoke tests against the Clalit Search API (no browser required):
 ```
 Running smoke tests...
 
-  ✓ search "amoxicillin" returns results
-  ✓ cities "תל" returns Tel Aviv area cities
-  ✓ pharmacies "אסותא" returns results
+  PASS search "amoxicillin" returns results
+  PASS cities "תל" returns Tel Aviv area cities
+  PASS pharmacies "כללית" returns results
 
 3 passed, 0 failed
 ```
