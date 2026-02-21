@@ -5,7 +5,6 @@
  */
 
 const SEARCH_BASE = 'https://e-services.clalit.co.il/PharmacyStockCoreAPI/Search';
-const STOCK_BASE = 'https://e-services.clalit.co.il/PharmacyStockCoreAPI/api/PharmacyStock';
 const PHARMACY_STOCK_URL = 'https://e-services.clalit.co.il/PharmacyStock/';
 const LANG = 'he-il';
 
@@ -22,39 +21,146 @@ async function searchPost(path, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    throw new Error(`Search API error: ${res.status} ${res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`Search API error: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
-// ── Stock check via Puppeteer (WAF-protected endpoints) ───────────────────────
+// Scan results for a matching item by searching short prefixes until found.
+// Used for both medication (a-z) and pharmacy (Hebrew letters) reverse-lookup,
+// since the Search API is text-only and doesn't support lookup by numeric code.
+async function findByPrefix(apiPath, prefixes, isPrefix, matchFn) {
+  for (const prefix of prefixes) {
+    const results = await searchPost(apiPath, {
+      searchText: encodeSearchText(prefix),
+      isPrefix,
+    }).catch(() => null);
+    const match = results?.find(matchFn);
+    if (match) return match;
+  }
+  return null;
+}
 
-async function stockPost(endpoint, body) {
+// ── Stock check via Puppeteer UI interaction (WAF-protected endpoints) ────────
+//
+// Imperva's JA3/JA4 TLS fingerprinting and stream-close detection block all
+// direct HTTP clients. Plain fetch(), undici, and session cookie reuse all fail.
+//
+// Bypass: pre-fetch the JS bundle via Node.js (static assets aren't blocked),
+// serve it via Puppeteer request interception, then drive the React UI to
+// trigger the API call. Response captured via page.on('response').
+// No stealth plugin needed — the bundle bypass is sufficient.
+
+async function loadPageWithBundleBypass(page) {
+  const bundleContent = await fetch(`${PHARMACY_STOCK_URL}index-bundle.js`).then(r => r.text());
+
+  await page.setRequestInterception(true);
+  page.on('request', req => {
+    const url = req.url();
+    if (url.includes('index-bundle.js')) {
+      req.respond({ status: 200, contentType: 'application/javascript', body: bundleContent });
+    } else if (url.includes('glassbox') || url.includes('gb.clalit')) {
+      // Block Glassbox – it monkey-patches window.fetch and causes API calls to fail
+      req.respond({ status: 200, contentType: 'application/javascript', body: '' });
+    } else {
+      req.continue();
+    }
+  });
+
+  await page.goto(PHARMACY_STOCK_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+  await new Promise(r => setTimeout(r, 800));
+}
+
+async function captureStockResponse(page, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timeout waiting for stock API response')), timeoutMs);
+    page.on('response', async res => {
+      if (!res.url().includes('GetPharmacyStock')) return;
+      clearTimeout(timer);
+      const ct = res.headers()['content-type'] || '';
+      if (!ct.includes('application/json')) {
+        reject(new Error(`WAF_BLOCKED:${res.status()}`));
+        return;
+      }
+      const data = await res.json().catch(reject);
+      if (data) resolve(data);
+    });
+  });
+}
+
+// Pick the first dropdown suggestion whose text satisfies matchFn, or fall back to index 0.
+async function uiPickSuggestion(page, menuSelector, matchFn) {
+  const items = await page.$$(menuSelector);
+  for (const li of items) {
+    const text = await li.evaluate(el => el.textContent?.trim());
+    if (text && matchFn(text)) { await li.click(); return; }
+  }
+  if (items.length > 0) await items[0].click();
+}
+
+async function uiSelectMedication(page, omryName) {
+  await page.click('#downshift-0-input');
+  await page.type('#downshift-0-input', omryName.split(' ')[0], { delay: 60 });
+  await new Promise(r => setTimeout(r, 1800));
+  await uiPickSuggestion(page, '[id^="downshift-0-menu"] li',
+    text => text === omryName || text.includes(omryName));
+  await new Promise(r => setTimeout(r, 300));
+}
+
+async function uiSubmit(page) {
+  const buttons = await page.$$('button');
+  for (const btn of buttons) {
+    const text = await btn.evaluate(el => el.textContent?.trim());
+    if (text?.includes('בדיקת מלאי')) { await btn.click(); return; }
+  }
+}
+
+async function stockCheck(medicationsList, { cityCode, cityName, pharmacyName }) {
   const { default: puppeteer } = await import('puppeteer');
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox', '--disable-setuid-sandbox'],
+  });
   try {
     const page = await browser.newPage();
-    await page.goto(PHARMACY_STOCK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+    );
+    await loadPageWithBundleBypass(page);
 
-    const url = `${STOCK_BASE}/${endpoint}?lang=${LANG}`;
-    const result = await page.evaluate(async (reqUrl, reqBody) => {
-      const res = await fetch(reqUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Recaptcha-Client-Token': '',
-        },
-        body: JSON.stringify(reqBody),
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error(`WAF_BLOCKED:${res.status}`);
+    const responsePromise = captureStockResponse(page);
+
+    if (cityCode) {
+      // Click the "יישוב" (city/settlement) tab – switches second input to downshift-2-input
+      const tabLinks = await page.$$('[class*="TabMenuItem__Link"]');
+      for (const link of tabLinks) {
+        const text = await link.evaluate(el => el.textContent?.trim());
+        if (text?.includes('יישוב')) { await link.click(); break; }
       }
-      return res.json();
-    }, url, body);
+      await new Promise(r => setTimeout(r, 300));
+    }
 
-    return result;
+    await uiSelectMedication(page, medicationsList[0].omryName);
+
+    if (cityCode) {
+      // After clicking the יישוב tab the city input ID becomes downshift-2-input
+      const citySearchWord = cityName.replace(/-/g, ' ').split(' ').find(w => w.length > 1) ?? cityName;
+      await page.click('#downshift-2-input');
+      await page.type('#downshift-2-input', citySearchWord, { delay: 60 });
+      await new Promise(r => setTimeout(r, 1800));
+      await uiPickSuggestion(page, '[id^="downshift-2-menu"] li',
+        // Exact match preferred; avoid single-word header separators in the dropdown
+        text => text === cityName || (text.includes(citySearchWord) && text.length > citySearchWord.length));
+    } else {
+      await page.click('#downshift-1-input');
+      await page.type('#downshift-1-input', pharmacyName.split(' ')[0], { delay: 60 });
+      await new Promise(r => setTimeout(r, 1800));
+      await uiPickSuggestion(page, '[id^="downshift-1-menu"] li',
+        text => text.includes(pharmacyName.split(' ')[0]));
+    }
+    await new Promise(r => setTimeout(r, 300));
+
+    await uiSubmit(page);
+    return await responsePromise;
   } finally {
     await browser.close();
   }
@@ -129,7 +235,6 @@ async function cmdCities(args) {
   const filtered = filterQuery
     ? results.filter(c => c.cityName.toLowerCase().includes(filterQuery))
     : results;
-
   if (filtered.length === 0) {
     console.log(`No cities matched "${filterQuery}"`);
     return;
@@ -165,46 +270,37 @@ function parseStockArgs(args) {
 }
 
 async function resolveOmryNames(catCodes) {
-  // Resolve display names for catCodes by fetching from catalog search.
-  // We use a dummy search to get the full catalog list and find the names.
-  // Fallback: use the catCode as the name string if not found.
-  const nameMap = new Map();
-  for (const code of catCodes) {
-    nameMap.set(code, String(code));
-  }
-
-  // Try to resolve each code by searching for its numeric string
-  for (const code of catCodes) {
-    try {
-      const results = await searchPost('GetFilterefMedicationsList', {
-        searchText: encodeSearchText(String(code)),
-        isPrefix: false,
-      });
-      const match = results?.find(m => m.catCode === code);
-      if (match) nameMap.set(code, match.omryName);
-    } catch {
-      // silently fall back to code string
+  // Resolve catCode → omryName. The API is text-based, so we scan a-z prefixes.
+  const nameMap = new Map(catCodes.map(c => [c, String(c)]));
+  const remaining = new Set(catCodes);
+  for (const prefix of 'abcdefghijklmnopqrstuvwxyz') {
+    if (remaining.size === 0) break;
+    const results = await searchPost('GetFilterefMedicationsList', {
+      searchText: encodeSearchText(prefix),
+      isPrefix: true,
+    }).catch(() => null);
+    for (const med of results ?? []) {
+      if (remaining.has(med.catCode)) {
+        nameMap.set(med.catCode, med.omryName);
+        remaining.delete(med.catCode);
+      }
     }
   }
   return nameMap;
 }
 
-function printStockResults(data, catCodes) {
+function printStockResults(data) {
   if (!data || data.isEmptyResult || !data.pharmaciesList || data.pharmaciesList.length === 0) {
     console.log('No pharmacies found for this search.');
     return;
   }
   for (const ph of data.pharmaciesList) {
-    const openStatus = ph.ifOpenedNow ? 'פתוח' : 'סגור';
     console.log(`\n📍 ${ph.pharmacyName}`);
     console.log(`   ${ph.pharmacyAdress || ''}`);
     if (ph.pharmacyPhone) console.log(`   📞 ${ph.pharmacyPhone}`);
-    console.log(`   🕐 ${openStatus}`);
-    if (ph.medicationsList && ph.medicationsList.length > 0) {
-      for (const med of ph.medicationsList) {
-        const label = stockLabel(med.kodStatusMlay);
-        console.log(`   💊 ${med.medicationName}: ${label}`);
-      }
+    console.log(`   🕐 ${ph.ifOpenedNow ? 'פתוח' : 'סגור'}`);
+    for (const med of ph.medicationsList ?? []) {
+      console.log(`   💊 ${med.medicationName}: ${stockLabel(med.kodStatusMlay)}`);
     }
   }
   console.log(`\nTotal: ${data.pharmaciesList.length} pharmacy branch(es)`);
@@ -230,33 +326,32 @@ async function cmdStock(args) {
     omryName: nameMap.get(code) ?? String(code),
   }));
 
+  // Resolve city/pharmacy name for UI interaction (API is text-based, not code-based)
+  let cityName, pharmacyName;
+  if (cityCode) {
+    const allCities = await searchPost('GetAllCitiesList', {});
+    cityName = allCities?.find(c => c.cityCode === cityCode)?.cityName ?? String(cityCode);
+  } else {
+    const HEBREW_PREFIXES = ['בית', 'מרקחת', 'א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ז', 'ח', 'ט', 'י', 'כ', 'ל', 'מ', 'נ', 'ס', 'ע', 'פ', 'צ', 'ק', 'ר', 'ש', 'ת'];
+    const match = await findByPrefix('GetFilterefPharmaciesList', HEBREW_PREFIXES, true, p => p.deptCode === pharmacyCode);
+    if (!match) {
+      console.error(`Cannot resolve pharmacy deptCode ${pharmacyCode}. Use "pharmacies <query>" to find a valid deptCode.`);
+      process.exit(1);
+    }
+    pharmacyName = match.deptName;
+  }
+
   console.log('Launching browser for stock check...');
   try {
-    let data;
-    if (cityCode) {
-      data = await stockPost('GetPharmacyStockByCityCode', {
-        medicationsList,
-        cityCode,
-        UserSystem: 3,
-        isGPSActive: false,
-      });
-    } else {
-      data = await stockPost('GetPharmacyStockByPharmacyCode', {
-        medicationsList,
-        pharmacyCode,
-        UserSystem: 3,
-        isGPSActive: false,
-      });
-    }
+    const data = await stockCheck(medicationsList, { cityCode, pharmacyCode, cityName, pharmacyName });
     if (data.isWsError) {
       console.error('Stock API returned an error. Please try again later.');
       process.exit(1);
     }
-    printStockResults(data, catCodes);
+    printStockResults(data);
   } catch (err) {
     if (err.message?.startsWith('WAF_BLOCKED')) {
-      console.error('Request was blocked by Clalit WAF. The stock check requires a browser session.');
-      console.error('This may happen if Clalit has updated their security policy.');
+      console.error('Request was blocked by Clalit WAF. This may happen if Clalit has updated their security policy.');
     } else {
       console.error(`Stock check failed: ${err.message}`);
     }
@@ -295,13 +390,12 @@ async function cmdTest() {
   await check('cities "תל" returns Tel Aviv area cities', async () => {
     const results = await searchPost('GetAllCitiesList', {});
     if (!results || results.length === 0) throw new Error('No cities returned');
-    const filtered = results.filter(c => c.cityName.includes('תל'));
-    if (filtered.length === 0) throw new Error('No תל cities found');
+    if (!results.some(c => c.cityName.includes('תל'))) throw new Error('No תל cities found');
   });
 
-  await check('pharmacies "אסותא" returns results', async () => {
+  await check('pharmacies "כללית" returns results', async () => {
     const results = await searchPost('GetFilterefPharmaciesList', {
-      searchText: encodeSearchText('אסותא'),
+      searchText: encodeSearchText('כללית'),
       isPrefix: false,
     });
     if (!results || results.length === 0) throw new Error('No results returned');
@@ -317,21 +411,11 @@ const [,, command, ...rest] = process.argv;
 
 try {
   switch (command) {
-    case 'search':
-      await cmdSearch(rest);
-      break;
-    case 'pharmacies':
-      await cmdPharmacies(rest);
-      break;
-    case 'cities':
-      await cmdCities(rest);
-      break;
-    case 'stock':
-      await cmdStock(rest);
-      break;
-    case 'test':
-      await cmdTest();
-      break;
+    case 'search':     await cmdSearch(rest); break;
+    case 'pharmacies': await cmdPharmacies(rest); break;
+    case 'cities':     await cmdCities(rest); break;
+    case 'stock':      await cmdStock(rest); break;
+    case 'test':       await cmdTest(); break;
     default:
       console.log('Clalit Pharmacy Stock Search\n');
       console.log('Commands:');

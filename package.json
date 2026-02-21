@@ -17,5 +17,6 @@
   "dependencies": {
     "puppeteer": "^22.0.0"
   },
+  "keywords": ["pharmacy", "medication", "clalit", "stock", "agent-skill", "בית מרקחת", "כללית"],
   "license": "MIT"
 }

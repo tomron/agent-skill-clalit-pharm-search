@@ -90,6 +90,6 @@ node {baseDir}/scripts/pharmacy-search.js stock 1000157274 --pharmacy 11431
 ## Notes
 
 - `search`, `pharmacies`, `cities`, and `test` use plain HTTP — fast, no browser needed
-- `stock` uses Puppeteer (headless Chrome) to bypass WAF protection — takes ~2–4 seconds
+- `stock` uses Puppeteer to drive the real Clalit web app UI — takes ~5–10 seconds
 - Puppeteer downloads Chromium (~300 MB) automatically on first `npm install`
-- If Clalit re-enables reCAPTCHA, the `stock` command may require updates
+- The stock check works by pre-fetching the JS bundle and interacting with the React app, bypassing Imperva's headless-browser detection
